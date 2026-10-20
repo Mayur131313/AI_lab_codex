@@ -1,0 +1,372 @@
+# AI Laboratory Practical Exam: Python Crash Guide
+
+This guide follows your eight assignments. Most PDFs give theory and an algorithm but no Python program; the examples below are short study versions written to match the stated topics. Assignment 5 includes code in its PDF, with one important block-clear bug noted below.
+
+## First: the Python you need tonight
+
+- `name = value` stores a value; `name == value` compares two values.
+- Indentation (four spaces) marks the body of an `if`, loop, or function.
+- `if / elif / else` makes decisions. `for` and `while` repeat work.
+- `def function_name(...):` defines a function. `return` sends a result back.
+- Lists use `[]`; tuples use `()`; sets use `{}`; dictionaries use `{key: value}`.
+- `range(n)` produces `0` through `n-1`. Lists are indexed from `0`.
+- `and`, `or`, and `not` combine true/false conditions.
+- `from collections import deque` gives a fast FIFO queue: `append()` adds at the back; `popleft()` removes from the front.
+- Recursion means a function calls itself. It needs a base case that stops the calls.
+
+For any program, be ready to explain: **input/state → rule or algorithm → next state/action → stopping condition → output**.
+
+## Assignment 1 — Simple reflex vacuum agent
+
+Rule: if the current room is dirty, suck; otherwise move to the other room. The policy uses the current room percept. This small simulation also checks the whole world to stop after both rooms are clean.
+
+```python
+rooms = {"A": "Dirty", "B": "Dirty"}
+location = "A"
+
+while True:
+    if rooms["A"] == "Clean" and rooms["B"] == "Clean":
+        print("NoOp: both rooms are clean")
+        break
+
+    if rooms[location] == "Dirty":
+        rooms[location] = "Clean"
+        action = "Suck"
+    elif location == "A":
+        location = "B"
+        action = "Move Right"
+    else:
+        location = "A"
+        action = "Move Left"
+
+    print(action, "| location:", location, "| rooms:", rooms)
+```
+
+**Viva:** A simple reflex agent chooses from the current percept only; it has no memory of past percepts. Percepts here are location and current-room cleanliness. Actions are Suck, Move Left, Move Right, and NoOp.
+
+## Assignment 2 — Model-based grid agent
+
+The PDF describes a grid, obstacles, a goal, and visited-cell memory. Its written algorithm only tries Right and Down, so it can report failure even when a route exists using Up or Left. This version uses the remembered map and BFS in all four directions.
+
+```python
+from collections import deque
+
+grid = ["S..", ".#.", "..G"]  # # is an obstacle
+start = (0, 0)
+goal = (2, 2)
+queue = deque([(start, [start])])
+visited = {start}  # the agent's memory
+path = None
+
+while queue:
+    (row, col), route = queue.popleft()
+    if (row, col) == goal:
+        path = route
+        break
+
+    for dr, dc in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+        nr, nc = row + dr, col + dc
+        inside = 0 <= nr < len(grid) and 0 <= nc < len(grid[0])
+        if inside and grid[nr][nc] != "#" and (nr, nc) not in visited:
+            visited.add((nr, nc))
+            queue.append(((nr, nc), route + [(nr, nc)]))
+
+print("Path:", path if path else "No path found")
+print("Remembered cells:", visited)
+```
+
+**Viva:** The internal state is the visited set/map; it lets the agent avoid repeating cells. A model-based agent combines the latest percept with stored information. A simple reflex agent does not.
+
+## Assignment 3 — A* search for the 8-puzzle
+
+The PDF's pictured start is `2 8 3 / 1 6 4 / 7 _ 5`; its goal is `1 2 3 / 8 _ 4 / 7 6 5`. `0` represents the blank. This uses misplaced tiles for `h(n)`.
+
+```python
+import heapq
+
+start = (2, 8, 3, 1, 6, 4, 7, 0, 5)
+goal = (1, 2, 3, 8, 0, 4, 7, 6, 5)
+
+def h(state):
+    return sum(tile != 0 and tile != goal[i]
+               for i, tile in enumerate(state))
+
+def neighbors(state):
+    blank = state.index(0)
+    row, col = divmod(blank, 3)
+    for dr, dc in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+        nr, nc = row + dr, col + dc
+        if 0 <= nr < 3 and 0 <= nc < 3:
+            other = nr * 3 + nc
+            new_state = list(state)
+            new_state[blank], new_state[other] = new_state[other], new_state[blank]
+            yield tuple(new_state)
+
+frontier = [(h(start), 0, start)]  # (f, g, state)
+cost = {start: 0}
+parent = {start: None}
+
+while frontier:
+    f, g, state = heapq.heappop(frontier)
+    if g != cost[state]:  # ignore an older, worse queue entry
+        continue
+    if state == goal:
+        break
+    for nxt in neighbors(state):
+        new_g = g + 1
+        if new_g < cost.get(nxt, float("inf")):
+            cost[nxt] = new_g
+            parent[nxt] = state
+            heapq.heappush(frontier, (new_g + h(nxt), new_g, nxt))
+
+route = []
+if goal in parent:
+    state = goal
+    while state is not None:
+        route.append(state)
+        state = parent[state]
+    route.reverse()
+    for state in route:
+        print(state[:3], state[3:6], state[6:])
+    print("Moves:", len(route) - 1)
+else:
+    print("No solution found")
+```
+
+**Viva:** `f(n) = g(n) + h(n)`. `g` is the path cost so far; `h` estimates the remaining cost. A* is informed search. Open/frontier holds candidates; parent pointers reconstruct the route. With an admissible heuristic and correct implementation, A* finds an optimal path.
+
+## Assignment 4 — Tower of Hanoi with state-space BFS
+
+Each state is three peg-tuples, stored bottom-to-top. BFS explores one move at a time and uses a queue plus a parent map to rebuild the shortest solution. For `n` disks, the minimum is `2**n - 1` moves.
+
+```python
+from collections import deque
+
+n = 3
+names = ["A", "B", "C"]
+start = (tuple(range(n, 0, -1)), (), ())
+goal = ((), (), tuple(range(n, 0, -1)))
+queue = deque([start])
+parent = {start: None}
+move_used = {}
+
+while queue and goal not in parent:
+    state = queue.popleft()
+    for source in range(3):
+        if not state[source]:
+            continue
+        disk = state[source][-1]  # only the top disk can move
+        for target in range(3):
+            if source == target:
+                continue
+            if state[target] and state[target][-1] < disk:
+                continue  # never put a larger disk on a smaller one
+
+            pegs = [list(peg) for peg in state]
+            pegs[source].pop()
+            pegs[target].append(disk)
+            nxt = tuple(tuple(peg) for peg in pegs)
+            if nxt not in parent:
+                parent[nxt] = state
+                move_used[nxt] = (disk, names[source], names[target])
+                queue.append(nxt)
+
+if goal in parent:
+    moves = []
+    state = goal
+    while parent[state] is not None:
+        moves.append(move_used[state])
+        state = parent[state]
+    for disk, source, target in reversed(moves):
+        print(f"Move disk {disk} from {source} to {target}")
+```
+
+**Viva:** State = disk arrangement; initial state = all disks on A; goal = all on C; operators = legal top-disk moves. BFS uses FIFO order and finds the fewest moves when each move has equal cost.
+
+## Assignment 5 — Blocks World with BFS
+
+The PDF's aim says BFS, and its program uses BFS; one theory heading says DFS by mistake. In its code, the set of blocks that are *not clear* should be based on the destination/support values, not on the block's own support. The corrected representation below stores the support of A, B, and C.
+
+```python
+from collections import deque
+
+blocks = ("A", "B", "C")
+start = ("Table", "Table", "Table")  # support of A, B, C
+goal = ("B", "C", "Table")           # A on B, B on C, C on Table
+
+def moves(state):
+    supports = dict(zip(blocks, state))
+    not_clear = {support for support in state if support in blocks}
+    clear = set(blocks) - not_clear
+    result = []
+
+    for block in clear:
+        old_support = supports[block]
+        destinations = ["Table"] + [b for b in clear if b != block]
+        for destination in destinations:
+            if destination == old_support:
+                continue
+            new_supports = dict(supports)
+            new_supports[block] = destination
+            new_state = tuple(new_supports[b] for b in blocks)
+            result.append((new_state, f"Move {block} onto {destination}"))
+    return result
+
+queue = deque([(start, [])])
+visited = {start}
+solution = None
+while queue:
+    state, path = queue.popleft()
+    if state == goal:
+        solution = path
+        break
+    for nxt, action in moves(state):
+        if nxt not in visited:
+            visited.add(nxt)
+            queue.append((nxt, path + [action]))
+
+print("Solution:")
+for step, action in enumerate(solution or [], 1):
+    print(step, action)
+if solution is None:
+    print("No solution found")
+```
+
+**Viva:** BFS uses a FIFO queue and a visited set. It returns the shortest action sequence when every action has equal cost. Without visited states it may revisit states or loop.
+
+## Assignment 6 — 8 Queens with backtracking
+
+Store one row number per column. Before placing a queen, check that it shares neither a row nor a diagonal with earlier queens.
+
+```python
+n = 8
+queen_rows = []  # index is column; value is row
+
+def safe(row, col):
+    for old_col, old_row in enumerate(queen_rows):
+        same_row = row == old_row
+        same_diagonal = abs(row - old_row) == abs(col - old_col)
+        if same_row or same_diagonal:
+            return False
+    return True
+
+def solve(col):
+    if col == n:  # all columns have a queen
+        return True
+    for row in range(n):
+        if safe(row, col):
+            queen_rows.append(row)
+            if solve(col + 1):
+                return True
+            queen_rows.pop()  # undo the choice: backtrack
+    return False
+
+if solve(0):
+    print("Queen rows by column (1-based):", [r + 1 for r in queen_rows])
+else:
+    print("No solution")
+```
+
+**Viva:** A CSP has variables, domains, and constraints. Here, each column is a variable, the rows are its domain, and the constraints prohibit shared rows/diagonals. Backtracking undoes a choice as soon as it cannot lead to a solution. The 8-Queens problem has 92 solutions.
+
+## Assignment 7 — Rule-based chatbot
+
+```python
+print("Hello! Type 'bye' to stop.")
+while True:
+    message = input("You: ").lower().strip()
+
+    if message in ("hello", "hi"):
+        answer = "Hello! How can I help you?"
+    elif "how are you" in message:
+        answer = "I am fine. Thank you!"
+    elif "your name" in message:
+        answer = "I am an AI chatbot."
+    elif message == "help":
+        answer = "I can answer simple predefined questions."
+    elif message == "bye":
+        print("Bot: Goodbye!")
+        break
+    else:
+        answer = "Sorry, I don't understand your question."
+
+    print("Bot:", answer)
+```
+
+**Viva:** Pattern matching compares input against predefined conditions. This chatbot does not learn or understand context; unknown input gets a default response. NLP means Natural Language Processing.
+
+## Assignment 8 — Tic-Tac-Toe Minimax
+
+`X` is MAX and `O` is MIN. Utilities are +1 for an X win, -1 for an O win, and 0 for a draw.
+
+```python
+from math import inf
+
+board = [" "] * 9
+lines = [(0, 1, 2), (3, 4, 5), (6, 7, 8),
+         (0, 3, 6), (1, 4, 7), (2, 5, 8),
+         (0, 4, 8), (2, 4, 6)]
+
+def winner():
+    for a, b, c in lines:
+        if board[a] != " " and board[a] == board[b] == board[c]:
+            return board[a]
+    return None
+
+def minimax(max_turn):
+    result = winner()
+    if result == "X":
+        return 1
+    if result == "O":
+        return -1
+    if " " not in board:
+        return 0
+
+    if max_turn:  # X chooses the highest score
+        best = -inf
+        mark = "X"
+    else:         # O chooses the lowest score
+        best = inf
+        mark = "O"
+
+    for i in range(9):
+        if board[i] == " ":
+            board[i] = mark
+            score = minimax(not max_turn)
+            board[i] = " "  # undo move before trying the next one
+            if max_turn:
+                best = max(best, score)
+            else:
+                best = min(best, score)
+    return best
+
+def best_x_move():
+    best_score = -inf
+    choice = None
+    for i in range(9):
+        if board[i] == " ":
+            board[i] = "X"
+            score = minimax(False)
+            board[i] = " "
+            if score > best_score:
+                best_score, choice = score, i
+    return choice
+
+move = best_x_move()
+board[move] = "X"
+print("Board after best X move:")
+for row in range(3):
+    print(board[row * 3:row * 3 + 3])
+```
+
+**Viva:** Minimax assumes both players choose optimally. MAX takes the maximum child value; MIN takes the minimum. Alpha-beta pruning skips branches that cannot affect the final choice. It gives the same move as minimax while often examining fewer states.
+
+## Last-minute study order
+
+1. Learn the Python basics at the top, especially indentation, lists/tuples, `if`, loops, functions, and `return`.
+2. Memorize each program's one-sentence algorithm and its stopping condition.
+3. Practice writing the short programs first: chatbot, vacuum, 8-Queens.
+4. Then review the common search pattern: queue/frontier + visited + goal test + successor generation (Assignments 2, 4, and 5).
+5. Finish with A* (`f = g + h`) and Minimax (MAX takes max, MIN takes min).
+
+If asked to explain code, trace one iteration by hand: current state, possible next states, selected action, and what condition ends the loop/recursion.
